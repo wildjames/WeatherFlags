@@ -8,7 +8,7 @@
 #include "WiFi_cred.h"
 
 //open weather map api key 
-String apiKey = API_KEY; 
+String api_key = API_KEY; 
 
 // How many slots does the forecast return to us? From the docs.
 int N_forecasts = 48;
@@ -17,6 +17,7 @@ int currentTime;
 
 // The open weather map API call
 String OWM_url = "http://api.openweathermap.org/data/2.5/onecall?lat=53.383&lon=-1.4659&exclude=daily,alerts,minutely&appid=";
+String OWM_past_url = "http://api.openweathermap.org/data/2.5/onecall/timemachine?lat=53.383&lon=-1.4659&dt=%d&appid=%s";
 String UNIX_timeof_url = "http://showcase.api.linx.twenty57.net/UnixTime/tounix?date=";
 
 int status = WL_IDLE_STATUS; 
@@ -24,9 +25,11 @@ int status = WL_IDLE_STATUS;
 WiFiClient client; 
 
 // This stores the weather info. We can loop over it later.
-String jsonBuffer;
+String json_buffer;
 DynamicJsonDocument doc(26000);
 JsonArray forecast;
+JsonArray history;
+
 
 // Servo stuff
 int lowangle = 0;
@@ -106,13 +109,17 @@ void loop() {
 
   // And then process all my flags.
 
-  bool condition1 = eval_firepit();
+  bool condition1 = evalFirepit();
   Serial.print("The firepit flag is ");
   if (condition1) {Serial.println("Raised");} else {Serial.println("Lowered");}
 
-  bool condition2 = eval_umbrella();
+  bool condition2 = evalUmbrella();
   Serial.print("The umbrella flag is ");
   if (condition2) {Serial.println("Raised");} else {Serial.println("Lowered");}
+
+
+  Serial.println("\n\n");
+
 
   Serial.println("Setting firepit angle");
   set_flag(servo_firepit, condition1);
@@ -143,51 +150,51 @@ void connect_wifi() {
 }
 
 
-void set_flag(Servo &flagServo, bool targetPos) {
+void set_flag(Servo &flag_servo, bool target_position) {
   // Get the angle I want to be at
-  int targetAngle;
-  Serial.print("targetPos is ");
-  Serial.println(targetPos);
-  if (targetPos) {
-    targetAngle = highangle;
+  int target_angle;
+  Serial.print("target_position is ");
+  Serial.println(target_position);
+  if (target_position) {
+    target_angle = highangle;
   } else {
-    targetAngle = lowangle;
+    target_angle = lowangle;
   }
 
   // Retrieve the servos current position
-  int currAngle = flagServo.read();
+  int current_angle = flag_servo.read();
   Serial.print("Servo is currently at angle ");
-  Serial.println(currAngle);
+  Serial.println(current_angle);
   Serial.print("And the target angle is ");
-  Serial.println(targetAngle);
+  Serial.println(target_angle);
 
   // Move by 1 degree every 20ms
-  if (currAngle < targetAngle) {
+  if (current_angle < target_angle) {
     Serial.println("Raising flag");
-    while (currAngle < targetAngle) {
-      currAngle++;
-      flagServo.write(currAngle);
-      delay(20);
+    while (current_angle < target_angle) {
+      current_angle++;
+      flag_servo.write(current_angle);
+      delay(10);
     }
   } else {
     Serial.println("Lowering flag");
-    while (currAngle > targetAngle) {
-      currAngle--;
-      flagServo.write(currAngle);
-      delay(20);
+    while (current_angle > target_angle) {
+      current_angle--;
+      flag_servo.write(current_angle);
+      delay(10);
     }
   }
 
   Serial.println("");
 }
 
-bool eval_firepit() {
+bool evalFirepit() {
   // above 10 degrees from 5pm - 12pm, with no precipitation.
   Serial.println("\n\nChecking for firepit flag");
 
-  bool isOK = true;
-  bool anyValid = false;
-  bool isValidTime;
+  bool is_OK = true;
+  bool any_valid_times = false;
+  bool is_valid_time;
   
   // I just need this temporary variable
   int dt;
@@ -205,23 +212,24 @@ bool eval_firepit() {
   
   Serial.print("Temperature threshold is ");
   Serial.println(minTemp);
-  
+
+  // Check the future
   for (int i=0; i<N_forecasts; i++) {    
-    JsonObject thisForecast = forecast[i];
-    dt = thisForecast["dt"];
-    isValidTime = ((dt > lowtime) and (dt < hightime));
-    if (isValidTime) {anyValid = true;}
+    JsonObject this_forecast = forecast[i];
+    dt = this_forecast["dt"];
+    is_valid_time = ((dt > lowtime) and (dt < hightime));
+    if (is_valid_time) {any_valid_times = true;}
 
     Serial.print("Is this a valid time? ");
     Serial.print(dt);
     Serial.print(" -> ");
-    Serial.println(isValidTime);
+    Serial.println(is_valid_time);
     
-    if (isValidTime and isOK) {
+    if (is_valid_time and is_OK) {
       // Check if the temperature is high enough to be comfy
       
-      int forecastTemp = thisForecast["feels_like"];
-      isOK = forecastTemp > minTemp;
+      int forecastTemp = this_forecast["feels_like"];
+      is_OK = forecastTemp > minTemp;
       
       Serial.print("\nFor timestamp ");
       Serial.print(dt);
@@ -229,40 +237,51 @@ bool eval_firepit() {
       Serial.print("Temperature feels like ");
       Serial.println(forecastTemp);
       Serial.print("Is this good? ");
-      if (isOK) {Serial.println("YES");} else {Serial.println("NO");}
+      if (is_OK) {Serial.println("YES");} else {Serial.println("NO");}
     }
     
-    if (isValidTime and isOK) {
+    if (is_valid_time and is_OK) {
       // Check if there's no rain or snow, or whatever. code 800+ is for no precipitation
       
-      JsonObject thisWeather = thisForecast["weather"][0];
+      JsonObject thisWeather = this_forecast["weather"][0];
       
       int weatherCode = thisWeather["id"];
-      isOK = (weatherCode >= 800);
+      is_OK = (weatherCode >= 800);
 
       Serial.print("The weather code is ");
       Serial.println(weatherCode);
-      Serial.print("Is this ok? ");
-      if (isOK) {Serial.println("YES");} else {Serial.println("NO");}
+      Serial.print(" Is this ok? ");
+      if (is_OK) {Serial.println("YES");} else {Serial.println("NO");}
+    }
+
+    // If we found a bad time, we can stop checking
+    if (not is_OK) {
+      Serial.println("Terminating the firepit check with FALSE");
+      return is_OK;
     }
   }
 
+
+  // Check the past
+  //TODO
+
+
   // if no timestamps were valid, the check failed due to it being too late in the day,
   // i.e. after 10pm.
-  isOK = (isOK and anyValid);
+  is_OK = (is_OK and any_valid_times);
 
-  return isOK;
+  return is_OK;
 }
 
 
-bool eval_umbrella() {
+bool evalUmbrella() {
   // If it's raining between 8am and 11am, or between 3pm and 6pm, raise this flag
   Serial.println("\n\nChecking for umbrella flag");
 
   // Initially True, if we break a rule the loop exits.
-  bool isOK = true;
-  bool anyValid = false;
-  bool isValidTime;
+  bool is_OK = true;
+  bool any_valid_times = false;
+  bool is_valid_time;
   
   // I just need this temporary variable
   int dt;
@@ -276,47 +295,52 @@ bool eval_umbrella() {
 
   // If the first digit of the weather code is 5, {[no 4 codes exist], 3, 2}, it's raining.
   // Test for code less than 600
-  int rain_code = 600;
+  int rain_code = 700;
   int weatherCode;
   
   // Loop over the forecast blocks.
   // Test to see if it's raining in these times
   for (int i=0; i<N_forecasts; i++) {
-    JsonObject thisForecast = forecast[i];
-    JsonObject thisWeather = thisForecast["weather"][0];
+    JsonObject this_forecast = forecast[i];
+    JsonObject thisWeather = this_forecast["weather"][0];
     
-    dt = thisForecast["dt"];
-    isValidTime = (((dt > lowtime1) and (dt < hightime1)) or ((dt > lowtime2) and (dt < hightime2)));
+    dt = this_forecast["dt"];
+    is_valid_time = (((dt > lowtime1) and (dt < hightime1)) or ((dt > lowtime2) and (dt < hightime2)));
     
-    if (isValidTime) {anyValid = true;}
+    if (is_valid_time) {any_valid_times = true;}
     
     weatherCode = thisWeather["id"];
     
-    if (isValidTime and isOK) {
-      isOK = (weatherCode < rain_code);
-      if (not isOK) {
+    if (is_valid_time and is_OK) {
+      is_OK = (weatherCode > rain_code);
+      if (not is_OK) {
         Serial.print("I see weather code ");
         Serial.print(weatherCode);
-        Serial.print("At time ");
+        Serial.print(" At time ");
         Serial.println(dt);
       }
     }
   }
 
-  return isOK;
+  
+  // if no timestamps were valid, the check failed due to it being too late in the day,
+  // i.e. after 10pm.
+  is_OK = (is_OK and any_valid_times);
+
+  return is_OK;
 }
 
 
 
-bool eval_picnic() {
+bool evalPicnic() {
   // ONLY if sunset is >6pm
   // Sunny on weekdays 4pm-6pm, or weekends all day
   Serial.println("\n\nChecking for picnic flag");
 
   // Initially True, if we break a rule the loop exits.
-  bool isOK = true;
-  bool anyValid = false;
-  bool isValidTime;
+  bool is_OK = true;
+  bool any_valid_times = false;
+  bool is_valid_time;
   
   // I just need this temporary variable
   int dt;
@@ -331,20 +355,20 @@ bool eval_picnic() {
 
   // Loop over the forecast blocks.
   for (int i=0; i<N_forecasts; i++) {
-    JsonObject thisForecast = forecast[i];
-    JsonObject thisWeather = thisForecast["weather"][0];
+    JsonObject this_forecast = forecast[i];
+    JsonObject thisWeather = this_forecast["weather"][0];
     
-    dt = thisForecast["dt"];
-    isValidTime = ((dt > lowtime) and (dt < hightime));
+    dt = this_forecast["dt"];
+    is_valid_time = ((dt > lowtime) and (dt < hightime));
     
-    if (isValidTime) {anyValid = true;}
+    if (is_valid_time) {any_valid_times = true;}
     
-    if (isValidTime and isOK) {
+    if (is_valid_time and is_OK) {
       // Check stuff here
     }
   }
 
-  return isOK;
+  return is_OK;
 }
 
 
@@ -353,9 +377,9 @@ bool eval_template() {
   Serial.println("\n\nChecking for XXX flag");
 
   // Initially True, if we break a rule the loop exits.
-  bool isOK = true;
-  bool anyValid = false;
-  bool isValidTime;
+  bool is_OK = true;
+  bool any_valid_times = false;
+  bool is_valid_time;
   
   // I just need this temporary variable
   int dt;
@@ -370,20 +394,20 @@ bool eval_template() {
 
   // Loop over the forecast blocks.
   for (int i=0; i<N_forecasts; i++) {
-    JsonObject thisForecast = forecast[i];
-    JsonObject thisWeather = thisForecast["weather"][0];
+    JsonObject this_forecast = forecast[i];
+    JsonObject thisWeather = this_forecast["weather"][0];
     
-    dt = thisForecast["dt"];
-    isValidTime = ((dt > lowtime) and (dt < hightime));
+    dt = this_forecast["dt"];
+    is_valid_time = ((dt > lowtime) and (dt < hightime));
     
-    if (isValidTime) {anyValid = true;}
+    if (is_valid_time) {any_valid_times = true;}
     
-    if (isValidTime and isOK) {
+    if (is_valid_time and is_OK) {
       // Check stuff here
     }
   }
 
-  return isOK;
+  return is_OK;
 }
 
 
@@ -394,10 +418,10 @@ int getTimeOf(String timeString) {
   
   String get_url = UNIX_timeof_url + timeString;
 
-  jsonBuffer = httpGETRequest(get_url.c_str());
-  jsonBuffer.replace('"', ' ');
-  jsonBuffer.trim();
-  int Time = jsonBuffer.toInt();
+  json_buffer = httpGETRequest(get_url.c_str());
+  json_buffer.replace('"', ' ');
+  json_buffer.trim();
+  int Time = json_buffer.toInt();
 
   return Time;
 }
@@ -416,9 +440,9 @@ void getWeather() {
   // https://openweathermap.org/api/one-call-api
   
   Serial.println("\nConnecting to OWM server..."); 
-  jsonBuffer = httpGETRequest(OWM_url.c_str());
+  json_buffer = httpGETRequest(OWM_url.c_str());
   
-  DeserializationError error = deserializeJson(doc, jsonBuffer);
+  DeserializationError error = deserializeJson(doc, json_buffer);
   forecast = doc["hourly"];
 
   int dt = forecast[0]["dt"];
@@ -429,6 +453,22 @@ void getWeather() {
   } else {
     Serial.println("Successfully got the weather!\n");
   }
+}
+
+
+void getPastWeather() {
+  // Get the weather history from OWM. Get the hourly forecast starting 24 hours ago
+
+  Serial.println("\nConnecting to OWM server...");
+
+  // Rewind 24 hours and get the 48 hour forecast
+  int target_time = getNowTime() - !*24*60*60
+  
+  String url_buffer;
+  sprintf(url_buffer, OWM_past_url, target_time, api_key)
+  Serial.println("Getting past weather from url:");
+  Serial.println(url_buffer);
+  json_buffer = httpGETRequest(url_buffer.c_str());
 }
 
 
